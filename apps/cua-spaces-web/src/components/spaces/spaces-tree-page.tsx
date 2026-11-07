@@ -3,7 +3,7 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { listView, useBridge, useMachines, useNotchPins, useResources, useSpaces, useSpacesDefault, type CreatingElsewhere, type SpaceOs } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
@@ -25,7 +25,7 @@ import { useNewSpace } from "@/hooks/use-new-space";
 import { plural } from "@/lib/plural";
 import { THIS_COMPUTER, computerParam } from "@/lib/machines";
 import type { ComputersSearch } from "@/lib/old-links";
-import { foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
+import { descendants, foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +54,7 @@ export function removeText(
   node: Pick<TreeNode, "name" | "children">,
   alsoDelete = false,
 ): { title: string; lead: string; keep: string; box: string | null; confirm: string } {
-  const n = node.children.length;
+  const n = descendants(node).length;
   const lead =
     n === 0
       ? "It leaves your list of computers, and your team can't use it any more."
@@ -227,7 +227,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
     return items;
   };
 
-  const rowFor = (n: TreeNode, depth: 0 | 1) => {
+  const rowFor = (n: TreeNode, depth: number) => {
     const folded = collapsed.has(n.key);
     const state = n.space ? spaceState(n.space) : null;
     const isEditing = editing?.key === n.key;
@@ -246,14 +246,14 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         data-state={state ?? undefined}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}
       >
-        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth === 1 && "pl-8", isEditing && "col-span-2")}>
-          {depth === 0 && n.children.length > 0 ? (
+        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth > 0 && "pl-8", isEditing && "col-span-2")}>
+          {n.children.length > 0 ? (
             <button
               type="button"
               aria-label={folded ? `Show the Spaces on ${n.name}` : `Hide the Spaces on ${n.name}`}
               aria-expanded={!folded}
               onClick={() => toggleCollapsed(n.key)}
-              className="-ml-5 flex size-4 items-center justify-center text-muted-foreground hover:text-foreground"
+              className={cn("flex size-4 items-center justify-center text-muted-foreground hover:text-foreground", depth === 0 ? "-ml-5" : "-ml-6")}
               data-tree-fold={n.key}
             >
               <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
@@ -384,9 +384,11 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   // isn't in the list come last.
   const elsewhereOn = (r: TreeNode) => creatingElsewhere.filter((c) => r.machine && c.machineId === r.machine.id);
   const strays = creatingElsewhere.filter((c) => !tree.roots.some((r) => r.machine?.id === c.machineId));
+  // A row, then (unless folded) the Spaces under it; a Space's child Spaces sit under it one step further in.
+  const rows = (n: TreeNode, depth: number): ReactNode[] => [rowFor(n, depth), ...(collapsed.has(n.key) ? [] : n.children.flatMap((c) => rows(c, depth + 1)))];
   const branch = (r: TreeNode) => [
     rowFor(r, 0),
-    ...(collapsed.has(r.key) ? [] : [...r.children.map((c) => rowFor(c, 1)), ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />)]),
+    ...(collapsed.has(r.key) ? [] : [...r.children.flatMap((c) => rows(c, 1)), ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />)]),
   ];
   const offlineRow =
     folded.length > 0 ? (
@@ -461,7 +463,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={deleting ? `Delete ${deleting.name}?` : ""}
-        description="It's deleted with its files. This can't be undone."
+        description={deleting && deleting.children.length > 0 ? `It's deleted with its files, and so ${descendants(deleting).length === 1 ? "is the child Space" : `are its ${descendants(deleting).length} child Spaces`} it made. This can't be undone.` : "It's deleted with its files. This can't be undone."}
         confirmLabel="Delete"
         destructive
         cancelFirst
@@ -537,7 +539,7 @@ export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClos
           <p className="mt-3 text-[14px] text-muted-foreground">{text.lead}</p>
           {node.children.length > 0 ? (
             <ul className="mt-3 flex flex-col gap-1.5 text-[14px]" data-tree-remove-children="">
-              {node.children.map((c) => (
+              {descendants(node).map((c) => (
                 <li key={c.key} className="flex items-center gap-2.5">
                   <TreeIcon node={c} />
                   {stopsLine(c)}

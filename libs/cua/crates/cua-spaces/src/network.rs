@@ -759,13 +759,6 @@ impl Spaces {
                     cua_vmm::network::secure_default_off_message(),
                 ));
             }
-            if matches!(settings.via, Some(cua_vmm::network::EgressVia::Space(_)))
-                && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
-            {
-                return Err(Error::invalid(
-                    cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-                ));
-            }
         }
         let Some(cua_vmm::network::EgressVia::Space(name)) = &settings.via else {
             return Ok(settings.clone());

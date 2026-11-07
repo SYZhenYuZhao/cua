@@ -798,7 +798,7 @@ impl VmmLocal {
                 Err(e) => tracing::warn!(%image, "pool.warm: {e}"),
             }
         }
-        if cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools) {
+        if warm_start_on() {
             match self.keep_warm_space(pool).await {
                 Ok(()) => {
                     sources.insert(crate::pool::WARM_SOURCE.to_string());
@@ -840,7 +840,7 @@ impl VmmLocal {
         });
     }
 
-    /// The `warm-pools` experiment: keeps one Linux Space ready, the Space
+    /// Warm start: keeps one Linux Space ready, the Space
     /// the Spaces app's Home makes for a new agent, with the coding apps of
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
@@ -1036,8 +1036,7 @@ impl VmmLocal {
                         // The image of a kept-warm request moved: creates keep
                         // the one they were served until a warm member of the
                         // new one is ready, so none waits on its pull.
-                        let kept = key.0 == warm_pools_image()
-                            && cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools);
+                        let kept = key.0 == warm_pools_image();
                         let next = match hold_refresh(&served, fresh, kept) {
                             Refresh::Serve(r) => r,
                             Refresh::Hold { next } => {
@@ -1377,9 +1376,21 @@ async fn warm_session(
     result
 }
 
-/// The image of the Linux Space the `warm-pools` experiment keeps ready: the
-/// Linux slim tier, which the Spaces app's Home creates for a new agent while
-/// the experiment is on (the wizard reads the same catalog file).
+/// The operator override that turns Warm start off for one daemon (`CUA_WARM_START=0`): for a
+/// cold benchmark, or a machine that must not hold a Space ready. Not a setting.
+pub const WARM_START_ENV: &str = "CUA_WARM_START";
+
+/// Whether the daemon keeps a Space ready (Warm start): always, unless the operator turned it
+/// off with [`WARM_START_ENV`].
+pub fn warm_start_on() -> bool {
+    !matches!(
+        std::env::var(WARM_START_ENV).ok().as_deref().map(str::trim),
+        Some("0" | "off" | "false")
+    )
+}
+
+/// The image of the Linux Space Warm start keeps ready: the Linux slim tier, which the Spaces
+/// app's Home creates for a new agent (the wizard reads the same catalog file).
 pub fn warm_pools_image() -> String {
     cua_image::catalog::entries()
         .iter()
@@ -3817,10 +3828,30 @@ mod tests {
         assert!(!host.can_prepare(cua_vmm::BackendKind::Firecracker));
     }
 
+    /// Warm start has no switch: it is on, and only the operator's `CUA_WARM_START=0` turns it off
+    /// for one daemon.
+    #[test]
+    fn warm_start_is_always_on_unless_the_operator_turns_it_off() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: serialised by ENV_LOCK; no other test reads this variable.
+        unsafe { std::env::remove_var(super::WARM_START_ENV) };
+        assert!(super::warm_start_on());
+        for off in ["0", "off", "false", " 0 "] {
+            unsafe { std::env::set_var(super::WARM_START_ENV, off) };
+            assert!(!super::warm_start_on(), "{off:?}");
+        }
+        for on in ["1", "on", "", "yes"] {
+            unsafe { std::env::set_var(super::WARM_START_ENV, on) };
+            assert!(super::warm_start_on(), "{on:?}");
+        }
+        unsafe { std::env::remove_var(super::WARM_START_ENV) };
+    }
+
     #[test]
     fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
         // The Spaces app's Home creates the Linux slim tier for a new agent
-        // while the experiment is on (the wizard's `first_space_offers`); a
+        // (the wizard's `first_space_offers`); a
         // different image here would never be claimed.
         assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04-slim");
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
