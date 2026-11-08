@@ -15,7 +15,7 @@ import { useBridge, useSpaces, type AgentChat, type ChatAttempt } from "@/bridge
 import { useStartTask } from "@/components/ask-first/use-start-task";
 import { connectNote, useAllWakeNotes } from "@/components/space-thread/summon";
 import { useConnectors } from "@/hooks/use-connectors";
-import { taskTitle, useAskTasks } from "@/lib/ask-first";
+import { taskTitle, useAskTasks, withoutStaleTasks } from "@/lib/ask-first";
 import { agentName } from "@/components/ask-first/ask-box";
 
 const HARNESS: Record<string, string> = { "openai-codex": "codex" };
@@ -37,7 +37,9 @@ export function stillCreating(task: { createdMs: number; pendingId: string | nul
 }
 
 export function useAgentAttempts(): ChatAttempt[] {
-  const tasks = useAskTasks();
+  const allTasks = useAskTasks();
+  // A job that never got a run and is half an hour old is not an attempt any more: it clears itself.
+  const tasks = useMemo(() => withoutStaleTasks(allTasks), [allTasks]);
   const notes = useAllWakeNotes();
   const { data: spaces } = useSpaces();
   // Time passes for a job that waits: the list is judged again every 15 s.
