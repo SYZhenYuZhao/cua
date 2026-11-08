@@ -878,7 +878,7 @@ impl VmmLocal {
                 1,
                 Some(1),
                 None,
-                Some(WARM_POOLS_IDLE),
+                Some(warm_pools_idle()),
                 Some(harnesses),
             )
             .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -928,7 +928,7 @@ impl VmmLocal {
                         1,
                         Some(1),
                         None,
-                        Some(WARM_POOLS_IDLE),
+                        Some(warm_pools_idle()),
                         Some(harnesses),
                     )
                     .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -1498,6 +1498,31 @@ fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
 
 /// How long the warm Space sits unused before it is given back.
 pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+
+/// [`WARM_POOLS_IDLE`], or `CUA_WARM_POOLS_IDLE_SECS` seconds when the operator sets it: a throwaway daemon that
+/// shows the warm Space draining without waiting ten minutes. Not a setting.
+pub fn warm_pools_idle() -> std::time::Duration {
+    idle_from(std::env::var("CUA_WARM_POOLS_IDLE_SECS").ok().as_deref())
+}
+
+fn idle_from(v: Option<&str>) -> std::time::Duration {
+    v.and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .map_or(WARM_POOLS_IDLE, std::time::Duration::from_secs)
+}
+
+#[cfg(test)]
+mod warm_idle_tests {
+    use super::{WARM_POOLS_IDLE, idle_from};
+
+    #[test]
+    fn the_idle_time_is_ten_minutes_unless_the_operator_shortens_it() {
+        assert_eq!(idle_from(None), WARM_POOLS_IDLE);
+        assert_eq!(idle_from(Some("45")).as_secs(), 45);
+        assert_eq!(idle_from(Some("0")), WARM_POOLS_IDLE);
+        assert_eq!(idle_from(Some("soon")), WARM_POOLS_IDLE);
+    }
+}
 
 /// What the warm pool asks of this machine: cua-spacesd of its members, and
 /// the memory they draw on.
