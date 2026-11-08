@@ -226,7 +226,9 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       depth: parent ? depth : 0,
     };
     // Its child Spaces (Child Spaces) sit under it; their tasks count on it too, so a computer's total stays whole.
-    node.children = (kidsOf.get(s.id) ?? []).map((c) => spaceNode(c, node, computer, node.depth + 1));
+    // The Spaces a Space made, in the order of their names (kid-a before kid-b), not the order the list came in.
+    const kids = [...(kidsOf.get(s.id) ?? [])].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    node.children = kids.map((c) => spaceNode(c, node, computer, node.depth + 1));
     for (const c of node.children) placed.add(c.key);
     node.running = n + node.children.reduce((sum, c) => sum + c.running, 0);
     node.tasks = tasksText(node.running, waits);

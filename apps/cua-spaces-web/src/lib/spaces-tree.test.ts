@@ -161,6 +161,12 @@ describe("child Spaces in the tree", () => {
     expect(findNode(t, GRAND.id)?.parentKey).toBe(KID_A.id);
   });
 
+  it("lists the children of a Space by name, whatever order the list came in", () => {
+    const t = withKids({ spaces: [...SPACES, KID_B, GRAND, KID_A] });
+    const build = t.roots[1]!.children[1]!;
+    expect(build.children.map((c) => c.name)).toEqual(["Build A", "Build B"]);
+  });
+
   it("counts every child in the Spaces total and adds its tasks to its parents' and its computer's", () => {
     const base = tree();
     const t = withKids({ running: new Map([...RUNNING, [KID_A.id, 1], [GRAND.id, 2]]) });
