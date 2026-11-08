@@ -232,9 +232,11 @@ pub fn tree_alias(name: &str, tree: &str) -> String {
 }
 
 /// Tree networks this process made lately, by name: one in flight has no container yet and must not be pruned.
-fn made_lately() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
-    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
-        std::sync::OnceLock::new();
+fn made_lately() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>
+{
+    static M: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    > = std::sync::OnceLock::new();
     M.get_or_init(Default::default)
 }
 
@@ -246,9 +248,10 @@ fn note_made(name: &str) {
 }
 
 fn recently_made(name: &str) -> bool {
-    made_lately()
-        .lock()
-        .is_ok_and(|m| m.get(name).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(300)))
+    made_lately().lock().is_ok_and(|m| {
+        m.get(name)
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(300))
+    })
 }
 
 /// The Docker network of tree `tree` for the cua home tagged `home_tag`:
@@ -618,9 +621,12 @@ impl ContainerRuntime {
     /// pool of the engine's few: 26 leaked ones made the next "create two child Spaces" fail with "all predefined address
     /// pools have been fully subnetted". Run before a new tree network is made.
     pub(crate) async fn prune_empty_tree_networks(&self) -> usize {
-        let filters = [("label".to_string(), vec![format!("ai.cua.home={}", super::home_tag())])]
-            .into_iter()
-            .collect();
+        let filters = [(
+            "label".to_string(),
+            vec![format!("ai.cua.home={}", super::home_tag())],
+        )]
+        .into_iter()
+        .collect();
         let listed = self
             .docker
             .list_networks(Some(bollard::query_parameters::ListNetworksOptions {

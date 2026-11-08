@@ -49,7 +49,9 @@ pub const LABEL_MACHINES: &str = "cua.home.machines";
 
 /// The home warming for Home's box (label `cua.hidden`): no list, count or tree shows it, and an agent's "list every Space"
 /// leaves it out too, whatever it was granted.
-pub fn is_warming_home<S: std::hash::BuildHasher>(labels: &std::collections::HashMap<String, String, S>) -> bool {
+pub fn is_warming_home<S: std::hash::BuildHasher>(
+    labels: &std::collections::HashMap<String, String, S>,
+) -> bool {
     labels.contains_key("cua.hidden")
 }
 
@@ -335,7 +337,9 @@ mod warming_tests {
 
     #[test]
     fn the_warming_home_is_not_listed_to_an_agent() {
-        let warming: HashMap<String, String> = [("cua.hidden".to_string(), "home".to_string())].into_iter().collect();
+        let warming: HashMap<String, String> = [("cua.hidden".to_string(), "home".to_string())]
+            .into_iter()
+            .collect();
         assert!(is_warming_home(&warming));
         assert!(!is_warming_home(&HashMap::new()));
     }

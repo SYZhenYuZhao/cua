@@ -707,7 +707,9 @@ async fn keep_attached(spaces: Spaces, key: String) {
                     Ok(Ok(None)) => return Ok(Attempt::Unsupported),
                     // The Space was deleted: nothing will ever mount, and retrying every minute for hours (as a deleted
                     // Space's watcher did) only fills the log and holds a task. Stop supervising it.
-                    Ok(Err(cua_spaces::Error::NotFound(_))) if space_is_unregistered(&spaces, &key) => {
+                    Ok(Err(cua_spaces::Error::NotFound(_)))
+                        if space_is_unregistered(&spaces, &key) =>
+                    {
                         return Ok(Attempt::Unsupported);
                     }
                     Ok(Err(e)) => format!("Cua Volume not mounted: {e}"),
@@ -728,7 +730,10 @@ async fn keep_attached(spaces: Spaces, key: String) {
 
 /// Whether `key` is no longer in this machine's registry (deleted), as opposed to a Space still starting.
 fn space_is_unregistered(spaces: &Spaces, key: &str) -> bool {
-    spaces.list().map(|rows| !rows.iter().any(|s| s.id == key)).unwrap_or(false)
+    spaces
+        .list()
+        .map(|rows| !rows.iter().any(|s| s.id == key))
+        .unwrap_or(false)
 }
 
 /// Whether the Space's volume is mounted and served: this side's socket is
