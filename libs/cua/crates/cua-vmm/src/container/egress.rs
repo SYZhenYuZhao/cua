@@ -196,9 +196,33 @@ pub(crate) fn settings(name: &str) -> Option<NetworkSettings> {
 
 /// The tree `name` belongs to.
 pub(crate) fn tree_of(name: &str) -> String {
-    kept(name)
+    let tree = kept(name)
         .and_then(|k| k.tree)
-        .unwrap_or_else(|| name.to_string())
+        .unwrap_or_else(|| name.to_string());
+    canonical_tree(&tree, |root| kept(root).and_then(|k| k.tree))
+}
+
+/// A tree named by its root Space (`local:<name>`, what a child is told) is the tree the root's container really sits
+/// in: a warm-claimed home keeps its pool member's tree, so its children must join THAT network, not a new one.
+pub(crate) fn canonical_tree(tree: &str, root_tree: impl Fn(&str) -> Option<String>) -> String {
+    match tree.strip_prefix("local:").and_then(|root| root_tree(root)) {
+        Some(real) => real,
+        None => tree.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod canonical_tree_tests {
+    use super::canonical_tree;
+
+    #[test]
+    fn the_children_of_a_claimed_home_join_the_homes_real_network() {
+        let kept = |root: &str| (root == "fancy-civet").then(|| "cua-pool-1".to_string());
+        assert_eq!(canonical_tree("local:fancy-civet", kept), "cua-pool-1");
+        // A home made cold has no kept tree: its tree is its id, as before.
+        assert_eq!(canonical_tree("local:cold", kept), "local:cold");
+        assert_eq!(canonical_tree("not-a-space-id", kept), "not-a-space-id");
+    }
 }
 
 /// The name container `name` of tree `tree` answers to on its tree's
