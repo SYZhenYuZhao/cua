@@ -205,7 +205,7 @@ pub(crate) fn tree_of(name: &str) -> String {
 /// A tree named by its root Space (`local:<name>`, what a child is told) is the tree the root's container really sits
 /// in: a warm-claimed home keeps its pool member's tree, so its children must join THAT network, not a new one.
 pub(crate) fn canonical_tree(tree: &str, root_tree: impl Fn(&str) -> Option<String>) -> String {
-    match tree.strip_prefix("local:").and_then(|root| root_tree(root)) {
+    match tree.strip_prefix("local:").and_then(root_tree) {
         Some(real) => real,
         None => tree.to_string(),
     }
