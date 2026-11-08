@@ -5970,13 +5970,19 @@
         "host": {
           "type": "string"
         },
-        "hidden": {
-          "type": "boolean"
-        },
         "hostName": {
           "type": "string"
         },
         "parent": {
+          "type": "string"
+        },
+        "jobName": {
+          "type": "string"
+        },
+        "jobGpu": {
+          "type": "boolean"
+        },
+        "jobRun": {
           "type": "string"
         },
         "power": {

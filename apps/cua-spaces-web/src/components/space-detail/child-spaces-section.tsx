@@ -9,16 +9,18 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { MoreHorizontalIcon } from "lucide-react";
+import { MicrochipIcon, MoreHorizontalIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useSpaces, type Space } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { OsIcon } from "@/components/os-icon";
+import { JobTag } from "@/components/space-thread/identity";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Menu } from "@/components/ui/menu";
 import { toast, toastError } from "@/components/ui/toast";
+import { jobOfSpace, oneRowPerJob } from "@/lib/job-space";
 import { plural } from "@/lib/plural";
 import { parentIdOf } from "@/lib/space-tree";
 import { createError, spaceState } from "@/lib/spaces";
@@ -83,7 +85,8 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const tree = useChildren();
   const { data, startSpace, stopSpace, deleteSpaces } = useSpaces();
   const all = data ?? [];
-  const kids = useMemo(() => childrenOfSpace(all, spaceId, tree), [all, spaceId, tree]);
+  // One row per job, however many Spaces (attempts) its run has made.
+  const kids = useMemo(() => oneRowPerJob(childrenOfSpace(all, spaceId, tree)), [all, spaceId, tree]);
   const total = useMemo(() => descendantCount(all, spaceId, tree), [all, spaceId, tree]);
   const [confirm, setConfirm] = useState<"all" | string | null>(null);
   if (!kids.length) return null;
@@ -122,9 +125,12 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
                 params={{ spaceId: k.id }}
                 className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
               >
-                <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
+                {jobOfSpace(k)?.gpu ? <MicrochipIcon data-job-gpu="" aria-label="GPU" className="size-3.5 shrink-0 text-muted-foreground" /> : <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate">{k.name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{jobOfSpace(k)?.name ?? k.name}</span>
+                    {jobOfSpace(k) ? <JobTag /> : null}
+                  </span>
                   {createError(k) ? (
                     <span className="block truncate text-[11px] text-destructive">{createError(k)}</span>
                   ) : null}
