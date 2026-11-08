@@ -845,7 +845,7 @@ impl VmmLocal {
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
     /// so the create that Home makes claims it. It is kept ready after each
-    /// claim at once, and drains after [`WARM_POOLS_IDLE`] without a create.
+    /// claim at once, and drains after [`HOME_WARMING_IDLE`] without a create.
     async fn keep_warm_space(
         &self,
         pool: &crate::pool::WarmPool,
@@ -878,7 +878,7 @@ impl VmmLocal {
                 1,
                 Some(1),
                 None,
-                Some(warm_pools_idle()),
+                Some(home_warming_idle()),
                 Some(harnesses),
             )
             .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -928,7 +928,7 @@ impl VmmLocal {
                         1,
                         Some(1),
                         None,
-                        Some(warm_pools_idle()),
+                        Some(home_warming_idle()),
                         Some(harnesses),
                     )
                     .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -1496,31 +1496,33 @@ fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
     (ordered, n)
 }
 
-/// How long the warm Space sits unused before it is given back.
-pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+/// How long the warm home Space (the one that warms for Home's box) sits unused before it is given back: 30
+/// minutes. Only the home warming: general named pools keep their own idle time. The single source of this number
+/// (`CUA_HOME_WARMING_IDLE_SECS` overrides it for one daemon); #6875 adds the same constant, keep one at merge.
+pub const HOME_WARMING_IDLE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-/// [`WARM_POOLS_IDLE`], or `CUA_WARM_POOLS_IDLE_SECS` seconds when the operator sets it: a throwaway daemon that
-/// shows the warm Space draining without waiting ten minutes. Not a setting.
-pub fn warm_pools_idle() -> std::time::Duration {
-    idle_from(std::env::var("CUA_WARM_POOLS_IDLE_SECS").ok().as_deref())
+/// [`HOME_WARMING_IDLE`], or `CUA_HOME_WARMING_IDLE_SECS` seconds when the operator sets it: a throwaway daemon that
+/// shows the warm Space draining without waiting the default (the one number is `HOME_WARMING_IDLE`). Not a setting.
+pub fn home_warming_idle() -> std::time::Duration {
+    idle_from(std::env::var("CUA_HOME_WARMING_IDLE_SECS").ok().as_deref())
 }
 
 fn idle_from(v: Option<&str>) -> std::time::Duration {
     v.and_then(|s| s.trim().parse::<u64>().ok())
         .filter(|s| *s > 0)
-        .map_or(WARM_POOLS_IDLE, std::time::Duration::from_secs)
+        .map_or(HOME_WARMING_IDLE, std::time::Duration::from_secs)
 }
 
 #[cfg(test)]
 mod warm_idle_tests {
-    use super::{WARM_POOLS_IDLE, idle_from};
+    use super::{HOME_WARMING_IDLE, idle_from};
 
     #[test]
-    fn the_idle_time_is_ten_minutes_unless_the_operator_shortens_it() {
-        assert_eq!(idle_from(None), WARM_POOLS_IDLE);
+    fn the_home_warming_idle_time_is_the_default_unless_the_operator_shortens_it() {
+        assert_eq!(idle_from(None), HOME_WARMING_IDLE);
         assert_eq!(idle_from(Some("45")).as_secs(), 45);
-        assert_eq!(idle_from(Some("0")), WARM_POOLS_IDLE);
-        assert_eq!(idle_from(Some("soon")), WARM_POOLS_IDLE);
+        assert_eq!(idle_from(Some("0")), HOME_WARMING_IDLE);
+        assert_eq!(idle_from(Some("soon")), HOME_WARMING_IDLE);
     }
 }
 
