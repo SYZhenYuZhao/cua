@@ -29,7 +29,7 @@ import { descendants, foldOffline, treeSummary, type TreeNode } from "@/lib/spac
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
-import { HomeTag, PinnedMark } from "./space-tile";
+import { PinnedMark } from "./space-tile";
 import { CloudsSection, DevicesSection, PendingSection, RemoveOldButton } from "./tree-extras";
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
 import { useRunningBySpace, useSpacesTreeData } from "./use-spaces-tree";
@@ -306,7 +306,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               {n.name}
             </button>
           )}
-          {n.kind === "space" && n.space && !isEditing ? <HomeTag spaceId={n.space.id} /> : null}
           {/* Folded, a Space says how many child Spaces are under it. */}
           {n.kind === "space" && folded && n.children.length > 0 && !isEditing ? (
             <span data-tree-folded-count={n.key} className="shrink-0 text-xs text-muted-foreground">
