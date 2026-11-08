@@ -458,7 +458,8 @@ def cua_daemon() -> Iterator[Daemon]:
                 proc.terminate()
                 proc.wait(timeout=15)
                 raise AssertionError(
-                    "the daemon did not exit within 10 s of its shutdown request (it was winding down warm preparation?)"
+                    "the daemon did not exit within 10 s of its shutdown request (it was winding down warm preparation?)\n"
+                    + (home / "daemon.log").read_text()[-3000:]
                 )
         shutil.rmtree(home, ignore_errors=True)
 

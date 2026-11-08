@@ -334,6 +334,8 @@ impl DaemonHandle {
                 break;
             }
         }
+        let began = std::time::Instant::now();
+        tracing::info!("the daemon is shutting down");
         // What an extension serves must not outlive the daemon (a mount,
         // writes not yet stored): each ends first, bounded.
         for a in self.shared.runtime.attached_extensions() {
@@ -350,12 +352,24 @@ impl DaemonHandle {
         if let Ok(vmm) = self.shared.runtime.vmm()
             && let Some(pool) = vmm.pool()
         {
+            tracing::info!(
+                after_ms = began.elapsed().as_millis() as u64,
+                "shutdown: draining the warm pool"
+            );
             let _ = tokio::time::timeout(std::time::Duration::from_secs(90), pool.drain()).await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: stopping tasks"
+        );
         for t in self.tasks.drain(..) {
             t.abort();
             let _ = t.await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: tasks stopped"
+        );
         // The built-in Linux runtime VM must not outlive the daemon that
         // started it (nothing else would stop it): stop it unless Linux
         // Spaces still run in it, and leave the answer for `cua daemon stop`.
