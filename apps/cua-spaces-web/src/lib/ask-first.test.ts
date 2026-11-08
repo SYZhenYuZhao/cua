@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Space } from "@/bridge";
 
 import {
+  withoutStaleTasks,
   addAskTask,
   askTasks,
   currentWhere,
@@ -182,3 +183,18 @@ describe("a start that failed", () => {
     }
   });
 });
+
+describe("stale tasks", () => {
+  it("clears a task that never got a run once it is half an hour old, and keeps the rest", () => {
+    const now = 10_000_000;
+    const old = now - 31 * 60_000;
+    const fresh = now - 60_000;
+    const rows = [
+      { runId: null, createdMs: old, ending: null },
+      { runId: null, createdMs: fresh, ending: null },
+      { runId: "run-1", createdMs: old, ending: null },
+    ] as never[];
+    expect(withoutStaleTasks(rows, now)).toEqual([rows[1], rows[2]]);
+  });
+});
+

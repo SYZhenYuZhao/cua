@@ -12,7 +12,7 @@ import { useAgentMenu } from "@/hooks/use-agent-menu";
 import { toast } from "@/components/ui/toast";
 import { connectFailureLine, useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
-import { currentWhere, SUGGESTIONS, thisMacConfirmed, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { currentWhere, SUGGESTIONS, thisMacConfirmed, useAskTasks, withoutStaleTasks, type AskTask, type TaskState } from "@/lib/ask-first";
 import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from "@/lib/ask-first-model";
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
@@ -56,7 +56,8 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
-  const tasks = useAskTasks();
+  const allTasks = useAskTasks();
+  const tasks = useMemo(() => withoutStaleTasks(allTasks), [allTasks]);
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
   const { kinds, spaces: pickable, computers } = useWhereOptions();
