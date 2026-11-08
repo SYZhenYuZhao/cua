@@ -296,6 +296,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
             </button>
           )}
           {n.kind === "space" && n.space && !isEditing ? <HomeTag spaceId={n.space.id} /> : null}
+          {/* Folded, a Space says how many child Spaces are under it. */}
+          {n.kind === "space" && folded && n.children.length > 0 && !isEditing ? (
+            <span data-tree-folded-count={n.key} className="shrink-0 text-xs text-muted-foreground">
+              {descendants(n).length === 1 ? "1 child" : `${descendants(n).length} children`}
+            </span>
+          ) : null}
           {pinnable(n) && !isEditing ? <PinnedMark id={n.space!.id} /> : null}
         </div>
         {isEditing ? (
@@ -469,7 +475,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={deleting ? `Delete ${deleting.name}?` : ""}
-        description={deleting && deleting.children.length > 0 ? `It's deleted with its files, and so ${descendants(deleting).length === 1 ? "is the child Space" : `are its ${descendants(deleting).length} child Spaces`} it made. This can't be undone.` : "It's deleted with its files. This can't be undone."}
+        description={deleting && deleting.children.length > 0 ? `It's deleted with its files, and so ${descendants(deleting).length === 1 ? "is its child Space" : "are its child Spaces"} ${namesOf(descendants(deleting).map((d) => d.name))}. This can't be undone.` : "It's deleted with its files. This can't be undone."}
         confirmLabel="Delete"
         destructive
         cancelFirst
@@ -484,6 +490,14 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
 }
 
 /** A Space another computer is making: its name, Getting ready and how far it got. Nothing to open yet. */
+/** "kid-a", "kid-a and kid-b", "kid-a, kid-b and kid-c" (names only up to four, then a count). */
+export function namesOf(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  if (names.length > 4) return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+  if (names.length === 1) return names[0]!;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 /** How far each level of child Spaces sits in from its parent (px): one caret slot and its gap. */
 const INDENT_PX = 26;
 
