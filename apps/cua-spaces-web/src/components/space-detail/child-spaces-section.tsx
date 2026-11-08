@@ -9,12 +9,12 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { MicrochipIcon, MoreHorizontalIcon } from "lucide-react";
+import { MoreHorizontalIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useSpaces, type Space } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
-import { OsIcon } from "@/components/os-icon";
+import { SpaceIcon } from "@/components/gpu-icon";
 import { JobTag } from "@/components/space-thread/identity";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
@@ -125,7 +125,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
                 params={{ spaceId: k.id }}
                 className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
               >
-                {jobOfSpace(k)?.gpu ? <MicrochipIcon data-job-gpu="" aria-label="GPU" className="size-3.5 shrink-0 text-muted-foreground" /> : <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />}
+                <SpaceIcon os={k.os} gpu={jobOfSpace(k)?.gpu} className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span className="truncate">{jobOfSpace(k)?.name ?? k.name}</span>
