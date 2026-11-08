@@ -418,9 +418,7 @@ def cua_daemon() -> Iterator[Daemon]:
         pytest.skip("the cua CLI is not built")
     home = Path(tempfile.mkdtemp(prefix=f"cua-e2e-{RUN}-", dir="/tmp"))
     sock = home / "cua.sock"
-    # Warm start is always on in a real daemon; a hermetic test daemon makes no warm Space (it would pull images and
-    # prepare apps in the background, and hold the daemon up when the test shuts it down).
-    env = dict(os.environ, CUA_HOME=str(home), CUA_WARM_START="0")
+    env = dict(os.environ, CUA_HOME=str(home))
     proc = subprocess.Popen(
         [
             str(binary),
@@ -451,11 +449,17 @@ def cua_daemon() -> Iterator[Daemon]:
         if proc.poll() is None:
             with contextlib.suppress(Exception):
                 run_async(cua.connect(str(sock)).shutdown_daemon(), timeout=15)
+            # The daemon runs with Warm start on, as a real one does: whatever it is preparing (an image pull, the Linux
+            # runtime installing, an app install) is cancelled when it quits, so it exits in seconds, not at the
+            # pool's own bounds.
             try:
-                proc.wait(timeout=15)
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.terminate()
                 proc.wait(timeout=15)
+                raise AssertionError(
+                    "the daemon did not exit within 10 s of its shutdown request (it was winding down warm preparation?)"
+                )
         shutil.rmtree(home, ignore_errors=True)
 
 

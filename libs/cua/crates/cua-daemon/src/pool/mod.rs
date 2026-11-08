@@ -77,6 +77,9 @@ const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 /// never slower than a cold start of its own) instead of booting another.
 pub const WARM_SOURCE: &str = "warm-pools";
 
+/// The longest [`WarmPool::drain`] waits for cancelled member starts to remove their containers.
+const DRAIN_CANCEL_WAIT: Duration = Duration::from_secs(8);
+
 /// The longest a create waits for a member that is starting
 /// ([`WARM_SOURCE`]): about what a cold start and the install it saves take.
 /// Past it the create starts cold, as it does without the experiment.
@@ -604,6 +607,8 @@ struct Inner {
     starting: Mutex<HashSet<String>>,
     /// [`WarmPool::drain`] ran: nothing starts any more.
     closed: std::sync::atomic::AtomicBool,
+    /// Wakes what waits for [`WarmPool::drain`] ([`WarmPool::or_closed`]).
+    closed_signal: tokio::sync::Notify,
     pid: u32,
     /// The policy's clock.
     epoch: Instant,
@@ -875,6 +880,7 @@ impl WarmPool {
                 refilling: Mutex::new(HashSet::new()),
                 starting: Mutex::new(HashSet::new()),
                 closed: Default::default(),
+                closed_signal: Default::default(),
                 pid: std::process::id(),
                 epoch: Instant::now(),
                 ticks: Default::default(),
@@ -1532,7 +1538,11 @@ impl WarmPool {
                 }
                 (s.template.clone(), s.backend, s.rt.clone(), s.estimate_mb())
             };
-            if !self.claims_work(backend, &rt).await {
+            // Waking the Linux runtime can mean installing and booting it: minutes a quitting daemon does not wait.
+            let Some(claims) = self.until_closed(self.claims_work(backend, &rt)).await else {
+                return;
+            };
+            if !claims {
                 self.forget_shape(key);
                 return;
             }
@@ -1557,10 +1567,25 @@ impl WarmPool {
                 );
                 return;
             }
-            if keep > 0 && self.inner.host.memory(backend).await.is_none() {
-                self.inner.host.wake(backend).await;
+            if keep > 0 {
+                let woke = self
+                    .until_closed(async {
+                        if self.inner.host.memory(backend).await.is_none() {
+                            self.inner.host.wake(backend).await;
+                        }
+                    })
+                    .await;
+                if woke.is_none() {
+                    return;
+                }
             }
-            if let Err(why) = self.memory_allows(backend, estimate, key).await {
+            let Some(allowed) = self
+                .until_closed(self.memory_allows(backend, estimate, key))
+                .await
+            else {
+                return;
+            };
+            if let Err(why) = allowed {
                 self.defer(key, "memory", why);
                 return;
             }
@@ -1815,15 +1840,11 @@ impl WarmPool {
         let (pool, key, template) = (self.clone(), key.to_string(), template.clone());
         handle.spawn(async move {
             let began = Instant::now();
-            let r = {
-                let work = pool.build_inner(&key, &template, backend, rt, &all, &first, from);
-                let closed = async {
-                    while !pool.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                };
-                tokio::select! { r = work => r, _ = closed => Err("the pool closed".to_string()) }
-            };
+            // Not cut off when the pool closes: `build_inner` ends itself ([`Self::or_closed`]) and removes its own builder
+            // container; dropping it here would leave the builder in `starting` and holding the container.
+            let r = pool
+                .build_inner(&key, &template, backend, rt, &all, &first, from)
+                .await;
             pool.inner.building.lock().unwrap().remove(&key);
             match r {
                 Ok(true) => tracing::info!(
@@ -1882,7 +1903,7 @@ impl WarmPool {
             return Err(e.to_string());
         }
         self.inner.starting.lock().unwrap().insert(name.clone());
-        let work = async {
+        let work = self.or_closed(async {
             let mut spec = template.clone();
             spec.name = name.clone();
             spec.pool_member = true;
@@ -1954,7 +1975,7 @@ impl WarmPool {
                 }
             }
             Ok(true)
-        }
+        })
         .await;
         match rt.delete(&name).await {
             Ok(()) | Err(VmmError::NotFound(_)) => self.forget_member(&name),
@@ -2048,37 +2069,38 @@ impl WarmPool {
         // of unknown members leaves it alone.
         self.inner.starting.lock().unwrap().insert(name.clone());
         let mut prepared = false;
-        let ready = async {
-            let inst = rt.start(&spec).await.map_err(|e| e.to_string());
-            if inst.is_err()
-                && let Some((tag, _)) = &saved
-            {
-                // The saved filesystem does not start any more (the engine
-                // lost it): the next member is prepared from scratch.
-                if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
-                    s.prepared_image = None;
+        let ready = self
+            .or_closed(async {
+                let inst = rt.start(&spec).await.map_err(|e| e.to_string());
+                if inst.is_err()
+                    && let Some((tag, _)) = &saved
+                {
+                    // The saved filesystem does not start any more (the engine
+                    // lost it): the next member is prepared from scratch.
+                    if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                        s.prepared_image = None;
+                    }
+                    self.index_remove(tag);
                 }
-                self.index_remove(tag);
-            }
-            let inst = inst?;
-            // A container member runs with its pool secret: it is ready
-            // once it serves a command and a screenshot. Other backends
-            // return from `start` with a member ready to claim (a microVM
-            // waits paused, unreachable until claimed).
-            if backend == BackendKind::Container {
-                self.inner
-                    .host
-                    .member_ready(
-                        &inst.endpoints,
-                        &secret,
-                        has_desktop(&spec),
-                        MEMBER_READY_TIMEOUT,
-                    )
-                    .await?;
-            }
-            Ok::<_, String>(inst)
-        }
-        .await;
+                let inst = inst?;
+                // A container member runs with its pool secret: it is ready
+                // once it serves a command and a screenshot. Other backends
+                // return from `start` with a member ready to claim (a microVM
+                // waits paused, unreachable until claimed).
+                if backend == BackendKind::Container {
+                    self.inner
+                        .host
+                        .member_ready(
+                            &inst.endpoints,
+                            &secret,
+                            has_desktop(&spec),
+                            MEMBER_READY_TIMEOUT,
+                        )
+                        .await?;
+                }
+                Ok::<_, String>(inst)
+            })
+            .await;
         let booted = started.elapsed();
         // The agent stack goes in while the member is hidden, so the Space
         // that claims it has its coding apps. A member that cannot be
@@ -2093,9 +2115,12 @@ impl WarmPool {
         {
             let began = Instant::now();
             match self
-                .inner
-                .host
-                .prepare(&inst.endpoints, &secret, &prepare, PREPARE_TIMEOUT)
+                .or_closed(async {
+                    self.inner
+                        .host
+                        .prepare(&inst.endpoints, &secret, &prepare, PREPARE_TIMEOUT)
+                        .await
+                })
                 .await
             {
                 Ok(()) => {
@@ -2122,6 +2147,13 @@ impl WarmPool {
                 return Err(e);
             }
         };
+        if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            // Drained while it was being made (or prepared): it is not kept.
+            let _ = rt.delete(&name).await;
+            self.forget_member(&name);
+            self.inner.starting.lock().unwrap().remove(&name);
+            return Err("the pool closed".to_string());
+        }
         let footprint_mb = self.inner.host.used_mb(backend, &name).await.unwrap_or(0);
         if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
             // The boot alone: preparing and saving are measured on their own.
@@ -2499,13 +2531,47 @@ impl WarmPool {
         removed
     }
 
-    /// Removes every member and starts none again (this pool is done):
-    /// waits for members being started, then deletes them all.
+    /// Runs `work`, or gives up (`None`) the moment the pool is drained.
+    async fn until_closed<T>(&self, work: impl std::future::Future<Output = T>) -> Option<T> {
+        let closed = async {
+            loop {
+                let notified = self.inner.closed_signal.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        tokio::select! {
+            r = work => Some(r),
+            _ = closed => None,
+        }
+    }
+
+    /// [`Self::until_closed`] for work that can fail: the pool closing is an error.
+    async fn or_closed<T>(
+        &self,
+        work: impl std::future::Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
+        self.until_closed(work)
+            .await
+            .unwrap_or_else(|| Err("the pool closed".to_string()))
+    }
+
+    /// Removes every member and starts none again (this pool is done): what is being made is
+    /// cancelled ([`Self::until_closed`]), then every member is deleted.
     pub async fn drain(&self) {
         self.inner
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let deadline = Instant::now() + MEMBER_READY_TIMEOUT + Duration::from_secs(60);
+        // What is still being made (an image pull, a member booting, an app install that takes minutes) is cancelled, not
+        // waited for: each such task sees the pool closed ([`Self::or_closed`]), removes its own container and ends. Waiting
+        // for them to finish on their own held a quitting daemon for up to 90 s (the caller's bound) and a relaunch or
+        // update with it. The wait here is only for those removals, a few seconds at most.
+        self.inner.closed_signal.notify_waiters();
+        let deadline = Instant::now() + DRAIN_CANCEL_WAIT;
         while !self.inner.starting.lock().unwrap().is_empty()
             || !self.inner.refilling.lock().unwrap().is_empty()
         {
@@ -2515,7 +2581,7 @@ impl WarmPool {
                 );
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let mut saved: Vec<(Arc<dyn VmmRuntime>, String)> = Vec::new();
         let all: Vec<(Arc<dyn VmmRuntime>, Member)> = {
@@ -2819,6 +2885,8 @@ mod tests {
         prepared: Mutex<Vec<Vec<String>>>,
         fail_prepare: AtomicBool,
         prepare_ms: std::sync::atomic::AtomicU64,
+        /// The runtime is not up and waking it takes a minute (the built-in Linux runtime installing and booting).
+        runtime_down: AtomicBool,
     }
 
     impl Default for FakeHost {
@@ -2836,6 +2904,7 @@ mod tests {
                 prepared: Mutex::new(vec![]),
                 fail_prepare: AtomicBool::new(false),
                 prepare_ms: Default::default(),
+                runtime_down: AtomicBool::new(false),
             }
         }
     }
@@ -2892,12 +2961,19 @@ mod tests {
             Ok(())
         }
         async fn memory(&self, _: BackendKind) -> Option<Memory> {
+            if self.runtime_down.load(SeqCst) {
+                return None;
+            }
             Some(*self.memory.lock().unwrap())
         }
         async fn used_mb(&self, _: BackendKind, _: &str) -> Option<u64> {
             Some(400)
         }
-        async fn wake(&self, _: BackendKind) {}
+        async fn wake(&self, _: BackendKind) {
+            if self.runtime_down.load(SeqCst) {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        }
         async fn members_present(&self, _: BackendKind) -> Option<Vec<String>> {
             None
         }
@@ -3602,6 +3678,82 @@ mod tests {
             "shape {key} never had {n} ready member(s): {:?}",
             f.pool.shape_status(key)
         );
+    }
+
+    /// A daemon that quits while a warm member is being prepared (an app install can take minutes) used to wait for the
+    /// install: `drain` polled until nothing was starting, up to the caller's 90 s. It cancels the preparation now.
+    #[tokio::test]
+    async fn quitting_while_a_member_is_being_prepared_does_not_wait_for_the_preparation() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.host.prepare_ms.store(60_000, SeqCst);
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        // The member is up and its apps are installing.
+        for _ in 0..200 {
+            if !f.rt.members().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!f.rt.members().is_empty(), "a member started for {key}");
+        assert!(
+            f.pool.shape_status(&key).is_some_and(|s| s.0 == 0),
+            "not ready: still preparing"
+        );
+        let began = Instant::now();
+        f.pool.drain().await;
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "drain took {:?}: it waited for the preparation",
+            began.elapsed()
+        );
+        assert!(
+            f.rt.members().is_empty(),
+            "the member being prepared was removed: {:?}",
+            f.rt.members()
+        );
+    }
+
+    /// The first refill of a daemon can be waking the Linux runtime (installing and booting it takes minutes). Quitting
+    /// does not wait for that either.
+    #[tokio::test]
+    async fn quitting_while_the_runtime_is_being_woken_does_not_wait_for_it() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.host.runtime_down.store(true, SeqCst);
+        let rt: Arc<dyn VmmRuntime> = f.rt.clone();
+        let key = f
+            .pool
+            .keep(&spec("one", "t"), BackendKind::Container, true, rt, 1)
+            .unwrap();
+        let pool = f.pool.clone();
+        let refill = tokio::spawn(async move { pool.refill(&key).await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let began = Instant::now();
+        f.pool.drain().await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), refill)
+            .await
+            .expect("the refill ended with the pool");
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(f.rt.members().is_empty());
+    }
+
+    /// An idle daemon with a ready warm member quits at once.
+    #[tokio::test]
+    async fn quitting_with_a_ready_member_is_quick_and_takes_it_with_it() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        let began = Instant::now();
+        f.pool.drain().await;
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(f.rt.members().is_empty());
     }
 
     #[tokio::test]
