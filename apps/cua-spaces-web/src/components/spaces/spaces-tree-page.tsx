@@ -246,19 +246,23 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         data-state={state ?? undefined}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}
       >
-        <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth > 0 && "pl-8", isEditing && "col-span-2")}>
-          {n.children.length > 0 ? (
-            <button
-              type="button"
-              aria-label={folded ? `Show the Spaces on ${n.name}` : `Hide the Spaces on ${n.name}`}
-              aria-expanded={!folded}
-              onClick={() => toggleCollapsed(n.key)}
-              className={cn("flex size-4 items-center justify-center text-muted-foreground hover:text-foreground", depth === 0 ? "-ml-5" : "-ml-6")}
-              data-tree-fold={n.key}
-            >
-              <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
-            </button>
-          ) : null}
+        <div role="cell" className={cn("flex min-w-0 items-center gap-1.5", isEditing && "col-span-2")} style={{ paddingLeft: depth * INDENT_PX }}>
+          {/* One slot for the fold caret on every row (empty when there is nothing to fold), inside the row's padding: the
+              caret never hangs out of the table's edge, and the icons line up at every depth. */}
+          <span className="flex size-5 shrink-0 items-center justify-center">
+            {n.children.length > 0 ? (
+              <button
+                type="button"
+                aria-label={folded ? `Show the Spaces on ${n.name}` : `Hide the Spaces on ${n.name}`}
+                aria-expanded={!folded}
+                onClick={() => toggleCollapsed(n.key)}
+                className="flex size-5 items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                data-tree-fold={n.key}
+              >
+                <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
+              </button>
+            ) : null}
+          </span>
           <TreeIcon node={n} className={cn(n.dim && "opacity-50")} />
           {isEditing ? (
             <Input
@@ -398,10 +402,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
             type="button"
             aria-expanded={showOffline}
             onClick={() => setShowOffline((v) => !v)}
-            className="-ml-5 flex min-w-0 items-center gap-2.5 text-left outline-none hover:text-foreground focus-visible:underline"
+            className="flex min-w-0 items-center gap-1.5 text-left outline-none hover:text-foreground focus-visible:underline"
             data-tree-offline-toggle=""
           >
-            <ChevronRightIcon className={cn("size-3.5 shrink-0 transition-transform", showOffline && "rotate-90")} />
+            <span className="flex size-5 shrink-0 items-center justify-center">
+              <ChevronRightIcon className={cn("size-3.5 transition-transform", showOffline && "rotate-90")} />
+            </span>
             <span className="shrink-0 font-medium text-foreground">{folded.length} offline</span>
             {showOffline ? null : <span className="min-w-0 truncate">{folded.map((n) => n.name).join(", ")}</span>}
           </button>
@@ -417,7 +423,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       <ComputerWarnings snapshot={resources} machines={machines.data ?? []} />
       <div role="table" aria-label="Your computers" data-spaces-tree="">
         <div role="row" className={cn(COLS, "px-4 pb-2 text-[13px] text-muted-foreground")}>
-          <div role="columnheader">Name</div>
+          <div role="columnheader" className="pl-[26px]">Name</div>
           <div role="columnheader">Status</div>
           <div role="columnheader">Who's on it</div>
           <div role="columnheader">Agent tasks</div>
@@ -478,12 +484,16 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
 }
 
 /** A Space another computer is making: its name, Getting ready and how far it got. Nothing to open yet. */
+/** How far each level of child Spaces sits in from its parent (px): one caret slot and its gap. */
+const INDENT_PX = 26;
+
 function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; nested?: boolean }) {
   const os: SpaceOs = c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
   const percent = `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
   return (
     <div role="row" data-creating-elsewhere={c.machineId} aria-label={`${c.name}: Getting ready on ${c.machineName.trim() || "another computer"}, ${percent}`} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}>
-      <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", nested && "pl-8")}>
+      <div role="cell" className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: nested ? INDENT_PX : 0 }}>
+        <span className="size-5 shrink-0" aria-hidden />
         <TreeIcon node={{ kind: "space", current: false, os }} />
         <span className="min-w-0 truncate">{c.name}</span>
       </div>
