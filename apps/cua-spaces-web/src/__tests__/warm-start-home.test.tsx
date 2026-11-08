@@ -113,7 +113,8 @@ describe.skipIf(!wasmBuilt)("with Warm start, the warming home is on no list unt
 
   it("makes nothing while the first run is not over", { timeout: 60_000 }, async () => {
     const calls: string[] = [];
-    writeFirstRun({ newRun: { screen: "next" } });
+    // Setup is still under way on screen 2 (a run saved on "next" now finishes on Home, so it is no longer "not over").
+    writeFirstRun({ newRun: { screen: "where" } });
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { ...demo, signedIn: false, onboarded: false }, intercept: (op) => (calls.push(op), undefined) });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 1_500));

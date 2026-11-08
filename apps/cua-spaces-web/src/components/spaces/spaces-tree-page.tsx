@@ -221,10 +221,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       // machines list that lags; the relay still refuses a computer that is connected.
       items.push({ label: `Remove ${n.name}`, destructive: true, disabled: r ? !r.enabled && n.online : false, onSelect: () => setRemoving(n) });
     }
-    if (pinnable(n)) {
-      const id = n.space!.id;
-      items.push({ label: pins.pinned.has(id) ? "Unpin from notch" : "Pin to notch", onSelect: () => void pins.toggle(id).catch(toastError("Couldn't change the notch")) });
-    }
     // Turn a Space on or off from its row, as the Space page's power button does (a Space that can be turned off, by its true
     // state; one being made, failed or not yours has none). Turning a parent off turns its child Spaces off with it.
     if (n.kind === "space" && n.space?.power && n.space.access?.canDelete !== false) {
@@ -235,6 +231,10 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       } else if (state === "stopped") {
         items.push({ label: "Turn on", onSelect: () => void startSpace(id).catch(toastError(`Couldn't turn on ${n.name}`)) });
       }
+    }
+    if (pinnable(n)) {
+      const id = n.space!.id;
+      items.push({ label: pins.pinned.has(id) ? "Unpin from notch" : "Pin to notch", onSelect: () => void pins.toggle(id).catch(toastError("Couldn't change the notch")) });
     }
     if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: "Delete", destructive: true, onSelect: () => setDeleting(n) });
     return items;
@@ -269,7 +269,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
                 aria-label={folded ? `Show the Spaces on ${n.name}` : `Hide the Spaces on ${n.name}`}
                 aria-expanded={!folded}
                 onClick={() => toggleCollapsed(n.key)}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                className="flex size-5 items-center justify-center rounded-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
                 data-tree-fold={n.key}
               >
                 <ChevronRightIcon className={cn("size-3.5 transition-transform", !folded && "rotate-90")} />
