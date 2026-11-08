@@ -85,7 +85,7 @@ export function removeText(
 export function SpacesTreePage({ search = {}, onSearchDone }: { search?: ComputersSearch; onSearchDone?: () => void }) {
   const running = useRunningBySpace();
   const { tree, loaded, defaults } = useSpacesTreeData(running);
-  const { data: spaces = [], listStatus, renameSpace, deleteSpace, creatingElsewhere } = useSpaces();
+  const { data: spaces = [], listStatus, renameSpace, deleteSpace, startSpace, stopSpace, creatingElsewhere } = useSpaces();
   const { core } = useBridge();
   const machines = useMachines();
   const resources = useResources();
@@ -222,6 +222,17 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
     if (pinnable(n)) {
       const id = n.space!.id;
       items.push({ label: pins.pinned.has(id) ? "Unpin from notch" : "Pin to notch", onSelect: () => void pins.toggle(id).catch(toastError("Couldn't change the notch")) });
+    }
+    // Turn a Space on or off from its row, as the Space page's power button does (a Space that can be turned off, by its true
+    // state; one being made, failed or not yours has none). Turning a parent off turns its child Spaces off with it.
+    if (n.kind === "space" && n.space?.power && n.space.access?.canDelete !== false) {
+      const state = spaceState(n.space);
+      const id = n.space.id;
+      if (state === "running") {
+        items.push({ label: n.children.length > 0 ? "Turn off, with its child Spaces" : "Turn off", onSelect: () => void stopSpace(id).catch(toastError(`Couldn't turn off ${n.name}`)) });
+      } else if (state === "stopped") {
+        items.push({ label: "Turn on", onSelect: () => void startSpace(id).catch(toastError(`Couldn't turn on ${n.name}`)) });
+      }
     }
     if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: "Delete", destructive: true, onSelect: () => setDeleting(n) });
     return items;
