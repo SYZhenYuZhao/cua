@@ -151,6 +151,30 @@ pub(crate) fn copy(from: &str, to: &str) -> Result<()> {
     }
 }
 
+/// After a warm-pool claim: `to` stays in the tree `from` was in (`from`'s own tree when it had none), since the
+/// container did not move networks when it was renamed.
+pub(crate) fn keep_tree_of_claimed(from: &str, to: &str) -> Result<()> {
+    let Some(mut k) = kept(to) else { return Ok(()) };
+    k.tree = Some(claimed_tree(kept(from).and_then(|f| f.tree), from));
+    keep(to, &k)
+}
+
+/// The tree a claimed container stays in: the one the member had, else the member's own.
+pub(crate) fn claimed_tree(member_tree: Option<String>, member: &str) -> String {
+    member_tree.unwrap_or_else(|| member.to_string())
+}
+
+#[cfg(test)]
+mod claimed_tree_tests {
+    use super::claimed_tree;
+
+    #[test]
+    fn a_claimed_member_keeps_the_network_of_its_own_tree() {
+        assert_eq!(claimed_tree(None, "cua-pool-1"), "cua-pool-1");
+        assert_eq!(claimed_tree(Some("root".into()), "cua-pool-1"), "root");
+    }
+}
+
 /// Whether the secure default applies ([`Mode::from_env`]).
 pub(crate) fn secure() -> bool {
     Mode::from_env() == Mode::Secure
@@ -183,8 +207,6 @@ pub fn tree_alias(name: &str, tree: &str) -> String {
     crate::tree::member_name(name, tree)
 }
 
-/// The Docker network of tree `tree` for the cua home tagged `home_tag`:
-/// `cua-t-<12 hex>`.
 /// Tree networks this process made lately, by name: one in flight has no container yet and must not be pruned.
 fn made_lately() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
     static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
@@ -205,6 +227,8 @@ fn recently_made(name: &str) -> bool {
         .is_ok_and(|m| m.get(name).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(300)))
 }
 
+/// The Docker network of tree `tree` for the cua home tagged `home_tag`:
+/// `cua-t-<12 hex>`.
 pub fn tree_network(home_tag: &str, tree: &str) -> String {
     let d = Sha256::digest(format!("{home_tag}:{tree}").as_bytes());
     let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
