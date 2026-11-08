@@ -20,6 +20,7 @@ import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
+import { BringTheRest } from "./bring-the-rest";
 import { agentName } from "./task-agents";
 import { AgentStatus } from "./agent-status";
 import type { AccountActions } from "./agent-picker";
@@ -176,6 +177,8 @@ export function AskFirstHome() {
         <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
+        {/* After the first job: the rest of setup, once (CUA-3150, idea C). On a Mac with a permission missing, the apps row at every launch (CUA-3551). */}
+        <BringTheRest />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
