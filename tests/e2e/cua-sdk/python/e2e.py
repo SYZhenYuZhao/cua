@@ -418,7 +418,9 @@ def cua_daemon() -> Iterator[Daemon]:
         pytest.skip("the cua CLI is not built")
     home = Path(tempfile.mkdtemp(prefix=f"cua-e2e-{RUN}-", dir="/tmp"))
     sock = home / "cua.sock"
-    env = dict(os.environ, CUA_HOME=str(home))
+    # Warm start is always on in a real daemon; a hermetic test daemon makes no warm Space (it would pull images and
+    # prepare apps in the background, and hold the daemon up when the test shuts it down).
+    env = dict(os.environ, CUA_HOME=str(home), CUA_WARM_START="0")
     proc = subprocess.Popen(
         [
             str(binary),
