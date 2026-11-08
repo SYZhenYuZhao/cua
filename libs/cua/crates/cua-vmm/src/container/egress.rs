@@ -185,6 +185,26 @@ pub fn tree_alias(name: &str, tree: &str) -> String {
 
 /// The Docker network of tree `tree` for the cua home tagged `home_tag`:
 /// `cua-t-<12 hex>`.
+/// Tree networks this process made lately, by name: one in flight has no container yet and must not be pruned.
+fn made_lately() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
+fn note_made(name: &str) {
+    if let Ok(mut m) = made_lately().lock() {
+        m.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(300));
+        m.insert(name.to_string(), std::time::Instant::now());
+    }
+}
+
+fn recently_made(name: &str) -> bool {
+    made_lately()
+        .lock()
+        .is_ok_and(|m| m.get(name).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(300)))
+}
+
 pub fn tree_network(home_tag: &str, tree: &str) -> String {
     let d = Sha256::digest(format!("{home_tag}:{tree}").as_bytes());
     let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
@@ -495,6 +515,11 @@ impl ContainerRuntime {
         if self.docker.inspect_network(&net, None).await.is_ok() {
             return Ok(net);
         }
+        // A new tree takes an address pool: give back those of trees nobody is on first.
+        let freed = self.prune_empty_tree_networks().await;
+        if freed > 0 {
+            tracing::info!(freed, "removed tree networks no container was on");
+        }
         let req = bollard::models::NetworkCreateRequest {
             name: net.clone(),
             driver: Some("bridge".into()),
@@ -518,7 +543,10 @@ impl ContainerRuntime {
             ..Default::default()
         };
         match self.docker.create_network(req).await {
-            Ok(_) => Ok(net),
+            Ok(_) => {
+                note_made(&net);
+                Ok(net)
+            }
             // Another start made it first.
             Err(e) => match self.docker.inspect_network(&net, None).await {
                 Ok(_) => Ok(net),
@@ -527,6 +555,40 @@ impl ContainerRuntime {
                 ))),
             },
         }
+    }
+
+    /// Removes every tree network of this home that no container is on. A container can be removed on paths that never
+    /// reach [`Self::unpolice`] (a warm-pool member, a failed start, a delete after a crash), and each tree holds an address
+    /// pool of the engine's few: 26 leaked ones made the next "create two child Spaces" fail with "all predefined address
+    /// pools have been fully subnetted". Run before a new tree network is made.
+    pub(crate) async fn prune_empty_tree_networks(&self) -> usize {
+        let filters = [("label".to_string(), vec![format!("ai.cua.home={}", super::home_tag())])]
+            .into_iter()
+            .collect();
+        let listed = self
+            .docker
+            .list_networks(Some(bollard::query_parameters::ListNetworksOptions {
+                filters: Some(filters),
+            }))
+            .await
+            .unwrap_or_default();
+        let mut removed = 0;
+        for name in listed.into_iter().filter_map(|n| n.name) {
+            if !name.starts_with(TREE_NETWORK_PREFIX) {
+                continue;
+            }
+            let Ok(n) = self.docker.inspect_network(&name, None).await else {
+                continue;
+            };
+            // A network this process just made for a start in flight has no container yet: leave it.
+            if recently_made(&name) || n.containers.as_ref().is_some_and(|c| !c.is_empty()) {
+                continue;
+            }
+            if self.docker.remove_network(&name).await.is_ok() {
+                removed += 1;
+            }
+        }
+        removed
     }
 
     /// Removes the Docker network of tree `tree` once no container is on
