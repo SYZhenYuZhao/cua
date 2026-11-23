@@ -9,7 +9,10 @@
 //! process, semantic key window, and per-display front position before it
 //! says `activated: true`.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use core_graphics::display::CGDisplay;
@@ -151,6 +154,7 @@ struct ExactWindowObservation {
     frontmost_ordinary_window_id: Option<u32>,
     process_front_window_on_display: Option<u32>,
     target_visible_ordinary: bool,
+    sharing_indicator_window_id: Option<u32>,
 }
 
 impl ExactWindowObservation {
@@ -266,9 +270,20 @@ fn front_window_of_process_on_target_display(
         .map(|window| window.window_id)
 }
 
-fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
+// Raw discovery still retains these windows. Only a positive semantic match
+// is excluded from this ordinary-window comparison; unknowns keep competing.
+fn exclude_sharing_indicators(windows: &mut Vec<WindowInfo>, indicators: &HashSet<u32>) {
+    windows.retain(|window| !indicators.contains(&window.window_id));
+}
+
+fn observe_exact_window(
+    pid: i32,
+    window_id: u32,
+    indicators: &HashSet<u32>,
+) -> ExactWindowObservation {
     let mut windows = crate::windows::visible_windows();
     windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));
+    exclude_sharing_indicators(&mut windows, indicators);
     let target_visible_ordinary = windows
         .iter()
         .any(|window| window.pid == pid && window.window_id == window_id && window.layer == 0);
@@ -290,16 +305,19 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
+        sharing_indicator_window_id: indicators.iter().copied().min(),
     }
 }
 
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
+    // Probe once per verification. Failure never excludes an unclassified window.
+    let indicators = crate::aux_window::sharing_indicator_window_ids(pid);
     let deadline = Instant::now() + VERIFY_TIMEOUT;
     let mut stable_since = None;
     let mut observation;
     loop {
         let now = Instant::now();
-        observation = observe_exact_window(pid, window_id);
+        observation = observe_exact_window(pid, window_id, &indicators);
         if observation.exact_postcondition(pid, window_id) {
             let since = stable_since.get_or_insert(now);
             if now.duration_since(*since) >= VERIFY_STABLE {
@@ -385,6 +403,7 @@ fn exact_result(
         "observed": {
             "frontmost_pid": frontmost_pid,
             "workspace_frontmost_pid": observation.workspace_frontmost_pid,
+            "sharing_indicator_window_id": observation.sharing_indicator_window_id,
             "front_process_matches_target": observation.front_process_matches_target,
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
@@ -676,6 +695,7 @@ mod tests {
             frontmost_ordinary_window_id,
             process_front_window_on_display: frontmost_ordinary_window_id,
             target_visible_ordinary,
+            sharing_indicator_window_id: None,
         }
     }
 
@@ -691,6 +711,7 @@ mod tests {
             frontmost_ordinary_window_id: global_front_window_id,
             process_front_window_on_display,
             target_visible_ordinary: true,
+            sharing_indicator_window_id: None,
         }
     }
 
@@ -1049,5 +1070,29 @@ mod tests {
         assert_eq!(structured["status"], "activated");
         assert_eq!(structured["activated"], true);
         assert_eq!(structured["exact_window_effect"]["verified"], true);
+    }
+    #[test]
+    fn sharing_auxiliary_cannot_outvote_exact_focus_but_small_business_window_can() {
+        let mut small = window(8, 42, 30, 100.0);
+        small.bounds.width = 66.0;
+        small.bounds.height = 20.0;
+        let original = vec![window(7, 42, 10, 100.0), small];
+        let displays = side_by_side_displays();
+        let mut classified = original.clone();
+        exclude_sharing_indicators(&mut classified, &HashSet::from([8]));
+        assert_eq!(
+            front_window_of_process_on_target_display(&classified, &displays, 42, 7),
+            Some(7)
+        );
+        let mut unknown_or_business = original;
+        exclude_sharing_indicators(&mut unknown_or_business, &HashSet::new());
+        assert_eq!(
+            front_window_of_process_on_target_display(&unknown_or_business, &displays, 42, 7),
+            Some(8)
+        );
+        assert_eq!(
+            front_window_of_process_on_target_display(&unknown_or_business, &displays, 42, 8),
+            Some(8)
+        );
     }
 }
