@@ -4,6 +4,11 @@
 """Prepare this one WorkOn fork patch; optionally attach it to a draft only.
 
 Never starts a daemon/App, probes permissions, signs, notarizes, or publishes.
+
+Publisher-only follow-up: the already published workon.1 assets remain built
+from 95b17744b951c6ceca1f729ce3327118acb52d3f. This lookup fix does not rewrite
+those assets. A future workflow run builds its newly supplied clean source SHA;
+the fixed workon.1 tag/asset guards still refuse replacing the existing release.
 """
 import argparse
 import hashlib
@@ -134,6 +139,35 @@ def existing(endpoint):
     return json.loads(response.stdout[response.stdout.index("\n\n") + 2:])
 
 
+def release_by_pending_tag():
+    """REST tag lookup covers published releases, not pending draft tags.
+
+    Enumerate every page so an existing draft cannot be mistaken for absence;
+    reject ambiguity, then read the selected immutable release ID.
+    """
+    matches = []
+    page = 1
+    while True:
+        rows = existing(f"repos/{REPOSITORY}/releases?per_page=100&page={page}")
+        if not isinstance(rows, list):
+            raise ValueError("release listing unreadable; cannot prove absence")
+        matches.extend(row for row in rows if row.get("tag_name") == TAG)
+        if len(matches) > 1:
+            raise ValueError("multiple releases have this pending tag; reconcile manually")
+        if len(rows) < 100:
+            break
+        page += 1
+    if not matches:
+        return None
+    release_id = matches[0].get("id")
+    if type(release_id) is not int or release_id <= 0:
+        raise ValueError("release listing has no valid release ID")
+    observed = existing(f"repos/{REPOSITORY}/releases/{release_id}")
+    if not isinstance(observed, dict) or observed.get("id") != release_id or observed.get("tag_name") != TAG:
+        raise ValueError("release ID metadata did not match pending tag; reconcile manually")
+    return observed
+
+
 def draft(root, source_sha, output):
     validate_source(root, source_sha)
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
@@ -151,7 +185,7 @@ def draft(root, source_sha, output):
     # Verify repository visibility before interpreting a ref's 404 as absence.
     if existing(f"repos/{REPOSITORY}") is None:
         raise ValueError("fork repository is not readable")
-    if existing(f"repos/{REPOSITORY}/releases/tags/{TAG}") is not None:
+    if release_by_pending_tag() is not None:
         raise ValueError("release already exists; refusing to overwrite any assets")
     tag = existing(f"repos/{REPOSITORY}/git/ref/tags/{TAG}")
     if tag is not None and (tag["object"]["type"] != "commit" or tag["object"]["sha"] != source_sha):
@@ -164,7 +198,7 @@ def draft(root, source_sha, output):
             "--notes-file", str(notes), *(str(output / name) for name in FILES))
     finally:
         notes.unlink()
-    observed = existing(f"repos/{REPOSITORY}/releases/tags/{TAG}")
+    observed = release_by_pending_tag()
     if not observed or observed.get("draft") is not True or observed.get("prerelease") is not True:
         raise ValueError("draft state was not verified; manual reconciliation required")
     if observed.get("target_commitish") != source_sha:

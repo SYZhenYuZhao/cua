@@ -159,7 +159,7 @@ class PatchReleaseTests(unittest.TestCase):
 
     def test_draft_refuses_existing_release_without_overwriting_assets(self):
         self.prepare()
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, {"draft": True, "assets": []}]):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, [{"id": 7, "tag_name": release.TAG}], {"id": 7, "tag_name": release.TAG, "draft": True, "assets": []}]):
             with self.assertRaisesRegex(ValueError, "release already exists"):
                 release.draft(self.root, SHA, self.output)
         self.assertFalse(any(c[:3] == ("gh", "release", "create") for c in self.calls))
@@ -167,18 +167,53 @@ class PatchReleaseTests(unittest.TestCase):
     def test_draft_refuses_tag_with_wrong_source_or_annotated_type(self):
         self.prepare()
         for tag in [{"object": {"type": "commit", "sha": "b" * 40}}, {"object": {"type": "tag", "sha": SHA}}]:
-            with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, None, tag]):
+            with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, [], tag]):
                 with self.assertRaisesRegex(ValueError, "existing tag"):
                     release.draft(self.root, SHA, self.output)
 
     def test_creates_draft_only_and_verifies_downloaded_payload(self):
         self.prepare()
-        observed = {"draft": True, "prerelease": True, "target_commitish": SHA,
+        observed = {"id": 7, "tag_name": release.TAG, "draft": True, "prerelease": True, "target_commitish": SHA,
                     "assets": [{"name": name} for name in release.FILES]}
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, None, None, observed]):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY}), patch.object(release, "existing", side_effect=[{}, [], None, [{"id": 7, "tag_name": release.TAG}], observed]):
             release.draft(self.root, SHA, self.output)
         self.assertFalse((self.output / ".draft-notes.tmp").exists())
         self.assertTrue(any(c[:3] == ("gh", "release", "download") for c in self.calls))
+
+    def test_draft_lookup_finds_pending_tag_without_published_tag_endpoint(self):
+        draft = {"id": 7, "tag_name": release.TAG, "draft": True}
+        with patch.object(release, "existing", side_effect=[[draft], draft]) as api:
+            self.assertEqual(release.release_by_pending_tag(), draft)
+        self.assertEqual([c.args[0] for c in api.call_args_list], [
+            f"repos/{release.REPOSITORY}/releases?per_page=100&page=1",
+            f"repos/{release.REPOSITORY}/releases/7"])
+
+    def test_draft_lookup_paginates_and_rejects_duplicate_pending_tags(self):
+        draft = {"id": 7, "tag_name": release.TAG, "draft": True}
+        unrelated = [{"id": n + 100, "tag_name": f"unrelated-{n}"} for n in range(100)]
+        with patch.object(release, "existing", side_effect=[unrelated, [draft], draft]) as api:
+            self.assertEqual(release.release_by_pending_tag(), draft)
+            self.assertIn("page=2", api.call_args_list[1].args[0])
+        first_page = [draft] + unrelated[:99]
+        with patch.object(release, "existing", side_effect=[first_page, [dict(draft, id=8)]]):
+            with self.assertRaisesRegex(ValueError, "multiple releases"):
+                release.release_by_pending_tag()
+
+    def test_draft_lookup_rejects_unreadable_or_changed_id_metadata(self):
+        for rows in [None, {}, "bad response"]:
+            with patch.object(release, "existing", return_value=rows):
+                with self.assertRaisesRegex(ValueError, "listing unreadable"):
+                    release.release_by_pending_tag()
+        row = {"id": 7, "tag_name": release.TAG}
+        for observed in [None, {}, dict(row, id=8), dict(row, tag_name="other")]:
+            with patch.object(release, "existing", side_effect=[[row], observed]):
+                with self.assertRaisesRegex(ValueError, "ID metadata"):
+                    release.release_by_pending_tag()
+        for status in [403, 500]:
+            response = subprocess.CompletedProcess([], 1, f"HTTP/2.0 {status} Error\n\n{{}}", "error")
+            with patch.object(subprocess, "run", return_value=response):
+                with self.assertRaisesRegex(ValueError, "read failed"):
+                    release.release_by_pending_tag()
 
     def test_http_absence_is_distinct_from_auth_and_transport_failure(self):
         for code, stdout, expected in [(1, "HTTP/2.0 404 Not Found\n\n{}", None), (0, 'HTTP/2.0 200 OK\n\n{"draft":true}', {"draft": True})]:
