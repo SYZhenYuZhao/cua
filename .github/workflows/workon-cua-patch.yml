@@ -1,0 +1,96 @@
+name: "WorkOn fork: prepare CUA patch draft"
+
+# Deliberately distinct from the official CD workflow/tag prefixes: this only
+# builds the WorkOn-consumed bare binaries and creates a fork-owned draft.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact reviewed 40-character fork source SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workon-cua-patch-0.52.12-workon.1
+  cancel-in-progress: false
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  build:
+    if: github.repository == 'SYZhenYuZhao/cua'
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate exact source and run publisher unit tests
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python3 -m unittest discover -s .github/scripts/tests -p test_workon_cua_patch_release.py
+          python3 -c 'import importlib.util,os,pathlib; p=pathlib.Path(".github/scripts/workon_cua_patch_release.py"); s=importlib.util.spec_from_file_location("patch",p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.validate_source(pathlib.Path.cwd(),os.environ["SOURCE_SHA"])'
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Run pure sharing-indicator regression tests
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p platform-macos --lib aux_window::tests
+      - name: Build both macOS architectures
+        working-directory: libs/cua-driver/rust
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+          CUA_DRIVER_GIT_SHA: ${{ inputs.source_sha }}
+        run: |
+          cargo build --locked -p cua-driver -p cursor-theme-cli --release --target aarch64-apple-darwin
+          cargo build --locked -p cua-driver -p cursor-theme-cli --release --target x86_64-apple-darwin
+      - name: Combine the two bare binaries
+        working-directory: libs/cua-driver/rust
+        run: |
+          mkdir -p target/workon-universal
+          lipo -create target/aarch64-apple-darwin/release/cua-driver target/x86_64-apple-darwin/release/cua-driver -output target/workon-universal/cua-driver
+          lipo -create target/aarch64-apple-darwin/release/cua-cursor-theme target/x86_64-apple-darwin/release/cua-cursor-theme -output target/workon-universal/cua-cursor-theme
+      - name: Prepare archive, checksums and source receipt
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 .github/scripts/workon_cua_patch_release.py prepare --source-sha "$SOURCE_SHA" --output "$RUNNER_TEMP/workon-cua-patch"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workon-cua-patch-0.52.12-workon.1
+          path: ${{ runner.temp }}/workon-cua-patch/
+          if-no-files-found: error
+          retention-days: 90
+
+  draft:
+    if: github.repository == 'SYZhenYuZhao/cua'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workon-cua-patch-0.52.12-workon.1
+          path: ${{ runner.temp }}/workon-cua-patch
+      - name: Create and verify a draft only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 .github/scripts/workon_cua_patch_release.py draft --source-sha "$SOURCE_SHA" --output "$RUNNER_TEMP/workon-cua-patch"
